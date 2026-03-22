@@ -1,0 +1,194 @@
+spring:
+  application:
+    name: S14P11A707
+  main:
+    allow-bean-definition-overriding: true
+
+  mvc:
+    async:
+      request-timeout: ${SPRING_MVC_ASYNC_REQUEST_TIMEOUT:30m}
+
+  # 로컬/테스트: .env 파일을 사용하고 싶으면(선택)
+  # - `.env` 파일은 properties 형식(KEY=VALUE)으로 작성
+  # - 파일이 없으면 무시(optional)
+  config:
+    import: optional:file:.env[.properties],optional:file:S14P11A707-backend/.env[.properties]
+
+  datasource:
+    url: ${DB_URL}
+    driver-class-name: ${DB_DRIVER}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    hikari:
+      minimum-idle: 30
+      maximum-pool-size: 1000
+
+  sql:
+    init:
+      # pgvector 등 확장/기본 DDL은 schema.sql에서 관리
+      # - 기본값은 embedded(=H2 등 내장 DB에서만 실행)로 두고,
+      #   PostgreSQL에서 schema.sql을 실행하려면 SQL_INIT_MODE=always 로 명시
+      mode: ${SQL_INIT_MODE:always}
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+
+  cache:
+    type: redis
+    redis:
+      time-to-live: 86400000  # 24시간 (밀리초)
+      cache-null-values: false
+      use-key-prefix: true
+
+  jpa:
+    hibernate:
+      ddl-auto: ${JPA_DDL_AUTO}
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+
+  flyway:
+    enabled: false
+
+  security:
+    oauth2:
+      client:
+        provider:
+          keycloak:
+            issuer-uri: ${KEYCLOAK_ISSUER_URI}
+        registration:
+          keycloak:
+            # Public client + PKCE (no client secret)
+            client-id: ${KEYCLOAK_CLIENT_ID}
+            client-authentication-method: none
+            authorization-grant-type: authorization_code
+            scope:
+              - openid
+              - email
+              - profile
+            redirect-uri: "{baseUrl}/oauth2/code/{registrationId}"
+  ai:
+    google:
+      genai:
+        api-key: ${SPRING_AI_GOOGLE_GENAI_API_KEY:${GMS_KEY:}}
+        chat:
+          options:
+            model: gemini-2.5-flash
+        embedding:
+          # embedding 커넥션은 별도 prefix(spring.ai.google.genai.embedding.*)를 사용하므로 api-key를 함께 지정
+          api-key: ${SPRING_AI_GOOGLE_GENAI_API_KEY:${GMS_KEY:}}
+          options:
+            model: gemini-embedding-001
+        base-url: ${SPRING_AI_GOOGLE_GENAI_BASE_URL:${GMS_GENAI_URL:https://gms.ssafy.io/gmsapi/generativelanguage.googleapis.com}}
+
+    openai:
+      api-key: ${GMS_KEY}
+      base-url: ${GMS_URL}
+      chat:
+        options:
+          model: ${GMS_MODEL}
+          # GMS가 라우팅하는 gpt-5-mini 계열은 temperature 기본값(1)만 허용
+          temperature: 1
+          max-completion-tokens: 2000
+        completions-path: ${GMS_PATH}
+
+gms:
+  url: ${GMS_URL:https://gms.ssafy.io/gmsapi/api.openai.com/v1/chat/completions}
+  key: ${GMS_KEY:}
+  model: ${GMS_MODEL:gpt-5-nano}
+
+springdoc:
+  swagger-ui:
+    with-credentials: true
+  show-actuator: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  info:
+    git:
+      enabled: true
+      mode: full
+
+app:
+  vertex:
+    # Vertex AI 기반 GenAI 연동 사용 여부
+    enabled: ${APP_VERTEX_ENABLED:true}
+    # Vertex 채팅 모델 (미지정 시 spring.ai.google.genai.chat.options.model 값 사용)
+    model: ${APP_VERTEX_MODEL:${SPRING_AI_GOOGLE_GENAI_CHAT_OPTIONS_MODEL:gemini-2.5-flash}}
+    # Gemini thinking level (예: HIGH / MEDIUM / LOW)
+    thinking-level: ${APP_VERTEX_THINKING_LEVEL:}
+    # 모델 thought 반환 여부
+    include-thoughts: ${APP_VERTEX_INCLUDE_THOUGHTS:false}
+    # Vertex AI 프로젝트/리전 (enabled=true일 때 필수, 레거시 fallback용)
+    project-id: ${APP_VERTEX_PROJECT_ID:}
+    location: ${APP_VERTEX_LOCATION:}
+    # 서비스 계정 키 JSON 경로 (예: file:/path/to/sa.json). 설정 시 access-token/ADC보다 우선.
+    credentials-uri: ${APP_VERTEX_CREDENTIALS_URI:}
+    # Vertex OAuth2 access token(또는 ADC)
+    access-token: ${APP_VERTEX_ACCESS_TOKEN:}
+    # 계정별 동시 AI 호출 제한
+    semaphore-per-account: ${APP_VERTEX_SEMAPHORE_PER_ACCOUNT:4}
+    # 전체 풀 RPM (requests per minute) 제한 (0 이하이면 비활성화)
+    rpm: ${APP_VERTEX_RPM:4}
+    # Multi-account pool
+    accounts:
+      - name: vertex-a
+        project-id: ${APP_VERTEX_PROJECT_ID:}
+        location: ${APP_VERTEX_LOCATION:}
+        credentials-uri: ${APP_VERTEX_CREDENTIALS_URI:}
+        access-token: ${APP_VERTEX_ACCESS_TOKEN:}
+      - name: vertex-b
+        project-id: ${APP_VERTEX_B_PROJECT_ID:${APP_VERTEX_PROJECT_ID:}}
+        location: ${APP_VERTEX_B_LOCATION:${APP_VERTEX_LOCATION:}}
+        credentials-uri: ${APP_VERTEX_B_CREDENTIALS_URI:${APP_VERTEX_CREDENTIALS_URI:}}
+        access-token: ${APP_VERTEX_B_ACCESS_TOKEN:${APP_VERTEX_ACCESS_TOKEN:}}
+  concurrency:
+    max-scenario-generation: ${APP_CONCURRENCY_MAX_SCENARIO:6}
+    max-chat-concurrent: ${APP_CONCURRENCY_MAX_CHAT:50}
+    chat-timeout-seconds: ${APP_CONCURRENCY_CHAT_TIMEOUT:30}
+  auth:
+    # 로그인 완료 후 이동할 URL (상대경로 또는 절대 URL)
+    # - 예) /swagger-ui/index.html
+    # - 예) https://hongyeon.cloud-ip.cc/
+    default-redirect-url: ${APP_AUTH_DEFAULT_REDIRECT_URL:/}
+    # 절대 URL 리다이렉트를 허용할 origin allowlist (comma-separated)
+    # - 예) https://hongyeon.cloud-ip.cc,http://localhost:5173
+    allowed-redirect-origins: ${APP_AUTH_ALLOWED_REDIRECT_ORIGINS:}
+  scenario:
+    v2:
+      image:
+        # 예) imagen-4.0-fast-generate-001 / imagen-4.0-generate-001 / imagen-4.0-ultra-generate-001
+        model: ${APP_SCENARIO_V2_IMAGE_MODEL:imagen-4.0-fast-generate-001}
+        # Gemini API(Imagen) 모델 요청 쿼터(RPM) 대비 쓰로틀링 값(0 이하로 설정 시 비활성화)
+        max-requests-per-minute: ${APP_SCENARIO_V2_IMAGE_MAX_REQUESTS_PER_MINUTE:10}
+  minio:
+    endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+    # 프론트(브라우저)가 직접 접근 가능한 공개 엔드포인트(리버스 프록시/도메인). 미지정 시 endpoint를 사용.
+    public-endpoint: ${MINIO_PUBLIC_ENDPOINT:${MINIO_ENDPOINT:http://localhost:9000}}
+    access-key: ${MINIO_ACCESS_KEY:minioadmin}
+    secret-key: ${MINIO_SECRET_KEY:ssafy1031}
+    bucket: ${MINIO_BUCKET:hongyeon}
+
+server:
+  # CloudFront/ALB/Nginx 뒤에서 {baseUrl}의 scheme/host가 꼬일 때 사용
+  forward-headers-strategy: framework
+
+  servlet:
+    encoding:
+      charset: UTF-8
+      enabled: true
+      force: true
+
+    session:
+      cookie:
+        secure: ${SESSION_COOKIE_SECURE:false}
+        http-only: true
+        same-site: ${SESSION_COOKIE_SAME_SITE:lax}

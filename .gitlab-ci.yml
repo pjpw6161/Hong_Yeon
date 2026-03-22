@@ -1,0 +1,65 @@
+# 간단한 CI/CD - Docker Compose(서버) 기반
+# main/master/test-build/test/* 푸시 시 → 프론트(nginx 정적) 이미지 빌드 → 백엔드 bootBuildImage → 서버에 이미지 로드 → compose up
+
+stages:
+  - deploy
+
+variables:
+  FRONTEND_DIR: "S14P11A707-frontend"
+  BACKEND_DIR: "S14P11A707-backend"
+  REMOTE_COMPOSE_DIR: "/home/ubuntu/infra"
+  # 서버 docker-compose.yml 의 backend.image 와 동일한 태그로 맞춰야 pull 없이 동작함
+  REGISTRY_HOST: "lab.ssafy.com:5050"
+
+  # dind (Docker-in-Docker) 사용
+  DOCKER_HOST: "tcp://docker:2375"
+  DOCKER_TLS_CERTDIR: ""
+
+deploy:
+  stage: deploy
+  image: gradle:8.10.0-jdk21-jammy
+  services:
+    - name: docker:27.0.3-dind
+      command: ["--tls=false"]
+  rules:
+    - if: '$CI_COMMIT_REF_NAME =~ /^(master|test-build|test\/.*)$/'
+  before_script:
+    - apt-get update && apt-get install -y openssh-client docker.io
+    # SSH 키 설정 (GitLab CI Variables에 EC2_SSH_KEY 등록 필요 - File 타입)
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    # File 타입 변수는 cat으로 읽어야 함
+    - cat "$EC2_SSH_KEY" | tr -d '\r' > ~/.ssh/id_rsa
+    - chmod 600 ~/.ssh/id_rsa
+    - ssh-keyscan i14a707.p.ssafy.io >> ~/.ssh/known_hosts
+  script:
+    - |
+      set -euo pipefail
+      export IMAGE_TAG="prod"
+      export PROJECT_PATH_LOWER="$(printf '%s' "$CI_PROJECT_PATH" | tr '[:upper:]' '[:lower:]')"
+      export BACKEND_IMAGE_NAME="$REGISTRY_HOST/$PROJECT_PATH_LOWER/backend:$IMAGE_TAG"
+      export FRONTEND_IMAGE_NAME="$REGISTRY_HOST/$PROJECT_PATH_LOWER/frontend:$IMAGE_TAG"
+      export VITE_API_BASE_URL="${VITE_API_BASE_URL:-https://hongyeon.cloud-ip.cc}"
+      echo "BACKEND_IMAGE_NAME=$BACKEND_IMAGE_NAME"
+      echo "FRONTEND_IMAGE_NAME=$FRONTEND_IMAGE_NAME"
+      echo "VITE_API_BASE_URL=$VITE_API_BASE_URL"
+
+      # 프론트: nginx 정적 이미지 빌드 (Dockerfile에서 Vite build 포함)
+      docker build --build-arg VITE_API_BASE_URL="$VITE_API_BASE_URL" -t "$FRONTEND_IMAGE_NAME" "$FRONTEND_DIR"
+
+      # 스프링부트 이미지 빌드
+      cd "$BACKEND_DIR"
+      chmod +x gradlew
+      ./gradlew --no-daemon bootBuildImage --imageName="$BACKEND_IMAGE_NAME"
+
+      # 서버의 docker-compose.yml 은 수동으로 관리(교체/배포는 사람이 수행)
+      cd "$CI_PROJECT_DIR"
+      ssh ubuntu@i14a707.p.ssafy.io "mkdir -p \"$REMOTE_COMPOSE_DIR\""
+
+      # 서버로 이미지 전송/로드 후 compose 재기동
+      docker save "$BACKEND_IMAGE_NAME" "$FRONTEND_IMAGE_NAME" | gzip -1 | ssh ubuntu@i14a707.p.ssafy.io "gunzip | docker load"
+      ssh ubuntu@i14a707.p.ssafy.io "cd \"$REMOTE_COMPOSE_DIR\" && docker compose --env-file .env.dev up -d --pull never --remove-orphans && docker compose ps"
+
+  environment:
+    name: production
+    url: http://i14a707.p.ssafy.io
